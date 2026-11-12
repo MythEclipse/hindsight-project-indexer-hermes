@@ -338,6 +338,174 @@ def get_readme_summary(root: Path, max_chars: int = 600) -> str:
     return ""
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RICH INDEXING: ARCHITECTURE, FLOW, CONVENTIONS, AND RULES
+# ─────────────────────────────────────────────────────────────────────────────
+
+ARCH_PATTERNS: Dict[str, List[str]] = {
+    "Domain-Driven Design (DDD)": ["domain", "application", "infrastructure", "presentation"],
+    "Clean / Hexagonal Architecture": ["adapters", "ports", "use_cases", "entities"],
+    "Layered Architecture": ["controllers", "services", "repositories", "models"],
+    "Monorepo / Workspaces": ["apps", "packages", "crates", "workspace"],
+    "Microservices": ["services", "gateway", "docker-compose", "k8s", "kubernetes"],
+    "Event-Driven / Queue-Based": ["events", "workers", "queue", "consumers", "publishers"],
+    "Plugin / Extension System": ["plugins", "extensions", "registry", "hooks"],
+    "Pipeline / Stage-Based": ["pipeline", "stages", "steps", "processors"],
+    "Layered Kernel / Engine": ["kernel", "engine", "backend", "frontend", "runtime"],
+    "ML / Training Pipeline": ["train", "inference", "dataset", "checkpoint", "tokenizer", "model"],
+}
+
+RULE_FILE_PATTERNS: List[Tuple[str, str]] = [
+    ("CLAUDE.md", "Project rules (Claude)"),
+    ("AGENTS.md", "Project rules (Agents)"),
+    ("CONTRIBUTING.md", "Contribution guidelines"),
+    ("ARCHITECTURE.md", "Architecture documentation"),
+    ("RULES.md", "Explicit project rules"),
+    (".cursorrules", "Cursor AI rules"),
+    (".editorconfig", "EditorConfig (formatting)"),
+    ("rustfmt.toml", "Rust formatting rules"),
+    ("clippy.toml", "Rust lint rules"),
+    ("ruff.toml", "Ruff Python lint rules"),
+    (".ruff.toml", "Ruff Python lint rules"),
+    ("biome.json", "Biome format & lint"),
+    ("eslint.config.mjs", "ESLint rules"),
+    (".eslintrc", "ESLint rules"),
+    (".pre-commit-config.yaml", "Pre-commit hooks"),
+    (".lintstagedrc", "lint-staged"),
+    ("commitlint.config.js", "Commit message linting"),
+    (".commitlintrc", "Commit message linting"),
+]
+
+PIPELINE_INDICATORS: List[Tuple[str, str]] = [
+    ("webhook", "Webhook intake"),
+    ("queue", "Queue / job dispatch"),
+    ("worker", "Worker processing"),
+    ("scheduler", "Scheduled jobs"),
+    ("cron", "Scheduled jobs"),
+    ("pipeline", "Multi-stage pipeline"),
+    ("middleware", "Middleware chain"),
+    ("router", "Route dispatch"),
+    ("handler", "Request handler"),
+    ("controller", "Controller layer"),
+    ("service", "Service layer"),
+    ("repository", "Data access layer"),
+    ("adapter", "Adapter / port"),
+    ("consumer", "Event consumer"),
+    ("producer", "Event producer"),
+    ("publisher", "Event publisher"),
+    ("subscriber", "Event subscriber"),
+]
+
+
+def detect_architecture_patterns(root: Path, scan_info: Dict[str, Any]) -> List[str]:
+    """Infer architectural patterns from directory structure and manifest hints."""
+    found: List[str] = []
+    all_dirs: Set[str] = set()
+    try:
+        for p in root.iterdir():
+            if p.is_dir() and p.name not in IGNORED_DIRS and not p.name.startswith("."):
+                all_dirs.add(p.name)
+    except Exception:
+        pass
+
+    # Check nested structure hints for DDD/Clean/Layered
+    for pattern, hints in ARCH_PATTERNS.items():
+        hit = sum(1 for h in hints if h in all_dirs or (root / h).exists())
+        if hit >= 2 or (pattern in ("Monorepo / Workspaces", "Microservices") and hit >= 1):
+            found.append(pattern)
+
+    # Add monorepo check from manifests
+    if scan_info.get("manifests"):
+        if any("workspace" in m.lower() for m in scan_info["manifests"]) and "Monorepo / Workspaces" not in found:
+            found.append("Monorepo / Workspaces")
+
+    return found[:5]
+
+
+def detect_project_rules(root: Path) -> Dict[str, Any]:
+    """Extract convention/rule files and notable explicit rules from project docs."""
+    rule_files: List[str] = []
+    extracted_rules: List[str] = []
+
+    for fname, label in RULE_FILE_PATTERNS:
+        f = root / fname
+        if f.is_file():
+            rule_files.append(label)
+
+    # Extract top actionable rules from CLAUDE.md / AGENTS.md / CONTRIBUTING.md
+    for fname in ["CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md", "RULES.md"]:
+        f = root / fname
+        if not f.is_file():
+            continue
+        try:
+            txt = f.read_text(encoding="utf-8")
+            for line in txt.splitlines():
+                s = line.strip()
+                if s.startswith(("- ", "* ")):
+                    clean = re.sub(r"^[-*]+\s*", "", s).strip()
+                    if len(clean) > 12 and any(
+                        w in clean.lower() for w in
+                        ["never", "always", "must", "rule", "convention", "required", "forbidden", "do not"]
+                    ):
+                        if clean not in extracted_rules and len(extracted_rules) < 8:
+                            extracted_rules.append(clean[:120])
+        except Exception:
+            pass
+
+    return {
+        "rule_files": rule_files,
+        "rules": extracted_rules,
+    }
+
+
+def detect_execution_flow(root: Path) -> List[str]:
+    """Infer execution/data flow stages from directory structure and file naming."""
+    flow: List[str] = []
+    seen = set()
+
+    # Look for pipeline-like top-level and one-level dirs
+    candidates: List[str] = []
+    try:
+        for p in root.rglob("*"):
+            rel = p.relative_to(root)
+            if len(rel.parts) > 2:
+                continue
+            if any(part in IGNORED_DIRS or part.startswith(".") for part in rel.parts):
+                continue
+            candidates.append(p.name.lower())
+    except Exception:
+        pass
+
+    for name in candidates:
+        for keyword, label in PIPELINE_INDICATORS:
+            if keyword in name and label not in seen:
+                flow.append(label)
+                seen.add(label)
+
+    # Deduplicate and preserve order
+    return flow[:8]
+
+
+def extract_env_keys(root: Path) -> List[str]:
+    """Extract configuration environment keys from .env templates."""
+    keys: List[str] = []
+    for cand in [".env.example", ".env.sample", ".env.template", ".env.dist"]:
+        f = root / cand
+        if not f.is_file():
+            continue
+        try:
+            for line in f.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if s and not s.startswith("#") and "=" in s:
+                    k = s.split("=", 1)[0].strip()
+                    if k and k not in keys:
+                        keys.append(k)
+        except Exception:
+            pass
+    return keys[:15]
+
+
 def build_project_summary(
     root: Path,
     max_depth: int = 3,
@@ -350,6 +518,11 @@ def build_project_summary(
     tree = generate_compact_tree(root, max_depth=max_depth, max_entries=max_files)
     readme = get_readme_summary(root)
 
+    arch_patterns = detect_architecture_patterns(root, scan_info)
+    exec_flow = detect_execution_flow(root)
+    rules_data = detect_project_rules(root)
+    env_keys = extract_env_keys(root)
+
     domains_str = " | ".join(scan_info["domains"])
     manifests_str = ", ".join(scan_info["manifests"]) or "None"
 
@@ -361,6 +534,12 @@ def build_project_summary(
         f"- Fingerprint: {fp}"
     ]
 
+    if arch_patterns:
+        lines.append(f"- Architecture: {', '.join(arch_patterns)}")
+
+    if exec_flow:
+        lines.append(f"- Inferred Flow: {' -> '.join(exec_flow)}")
+
     if git_info.get("branch"):
         status_line = f"- Git: branch '{git_info['branch']}' ({git_info['status_summary']})"
         lines.append(status_line)
@@ -371,6 +550,14 @@ def build_project_summary(
     if scan_info["commands"]:
         cmd_items = [f"{k}: `{v}`" for k, v in list(scan_info["commands"].items())[:6]]
         lines.append(f"- Commands: {', '.join(cmd_items)}")
+
+    if rules_data["rules"]:
+        lines.append("- Core Rules & Invariants:")
+        for r in rules_data["rules"][:4]:
+            lines.append(f"  • {r}")
+
+    if env_keys:
+        lines.append(f"- Environment Keys: {', '.join(env_keys[:8])}")
 
     if scan_info["languages"]:
         lang_items = [f"{lang} ({cnt})" for lang, cnt in scan_info["languages"]]
@@ -397,6 +584,10 @@ def build_project_summary(
         "fingerprint": fp,
         "git_info": git_info,
         "scan_info": scan_info,
+        "arch_patterns": arch_patterns,
+        "exec_flow": exec_flow,
+        "rules_data": rules_data,
+        "env_keys": env_keys,
         "readme": readme,
         "tree": tree,
         "formatted_context": formatted

@@ -60,11 +60,18 @@ class TestIndexer(unittest.TestCase):
             tmp_path = Path(tmpdir)
             (tmp_path / "README.md").write_text("# My Test App\nThis is a sample app.")
             (tmp_path / "Cargo.toml").write_text('[package]\nname = "my_app"\n[dependencies]\ntokio = "1"')
+            (tmp_path / "CLAUDE.md").write_text("## Rules\n- Never commit secrets to repository\n- Always run tests before pushing")
+            (tmp_path / ".env.example").write_text("DATABASE_URL=postgres://...\nPORT=8080")
+            (tmp_path / "apps").mkdir()
+            (tmp_path / "packages").mkdir()
 
             summary = build_project_summary(tmp_path)
             self.assertEqual(summary["project_name"], tmp_path.name)
             self.assertIn("My Test App", summary["readme"])
             self.assertIsNotNone(summary["fingerprint"])
+            self.assertIn("Monorepo / Workspaces", summary["arch_patterns"])
+            self.assertTrue(any("Never commit secrets" in r for r in summary["rules_data"]["rules"]))
+            self.assertIn("DATABASE_URL", summary["env_keys"])
 
 
 if __name__ == "__main__":
