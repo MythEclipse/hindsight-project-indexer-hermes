@@ -1,0 +1,20 @@
+name: hindsight-project-indexer-hermes
+version: 0.1.0
+description: Smart codebase indexing and context injection for Hermes using Hindsight memory backend.
+author: MythEclipse
+license: MIT
+homepage: https://github.com/MythEclipse/hindsight-project-indexer-hermes
+manifest_version: 2
+provides_hooks:
+  - pre_llm_call
+  - post_tool_call
+provides_commands:
+  - reindex
+  - projectinfo
+tags: [indexing, codebase, hindsight, context, efficiency]
+config_schema:
+  enabled: {type: bool, description: "Enable project indexer context injection (default true)"}
+  auto_reindex_on_edit: {type: bool, description: "Auto-trigger re-indexing after write/patch operations (default true)"}
+  max_depth: {type: int, description: "Max directory depth for tree indexing (default 3)"}
+  max_files: {type: int, description: "Max file entries to summarize in tree (default 80)"}
+  bank_id: {type: str, description: "Hindsight bank ID override (defaults to active bank in config.json)"}
