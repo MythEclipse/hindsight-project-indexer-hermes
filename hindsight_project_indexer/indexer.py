@@ -506,28 +506,108 @@ def extract_env_keys(root: Path) -> List[str]:
     return keys[:15]
 
 
+
+def extract_public_api_map(root: Path, max_symbols: int = 16) -> Dict[str, List[str]]:
+    """Extract key exported functions, types, and modules from core source files."""
+    api_map: Dict[str, List[str]] = {}
+    total = 0
+
+    patterns = [
+        "src/lib.rs", "src/main.rs", "src/index.ts", "src/index.js", "src/main.ts",
+        "apps/*/src/lib.rs", "apps/*/src/main.rs", "apps/*/src/index.ts", "apps/*/src/main.ts",
+        "packages/*/src/index.ts", "crates/*/src/lib.rs", "crates/*/src/main.rs",
+        "main.py", "app.py", "src/app.py", "main.go"
+    ]
+    core_files: List[Path] = []
+    for pat in patterns:
+        for match in root.glob(pat):
+            if match.is_file() and not any(part in IGNORED_DIRS for part in match.relative_to(root).parts):
+                core_files.append(match)
+                if len(core_files) >= 8:
+                    break
+
+    for f in core_files[:6]:
+        rel = str(f.relative_to(root))
+        symbols: List[str] = []
+        try:
+            txt = f.read_text(encoding="utf-8", errors="ignore")
+            if f.suffix == ".rs":
+                matches = re.findall(r"pub\s+(?:async\s+)?(mod|fn|struct|enum|trait|type)\s+([A-Za-z0-9_]+)", txt)
+                symbols.extend([f"pub {k} {n}" for k, n in matches[:6]])
+            elif f.suffix in (".ts", ".js", ".tsx", ".jsx"):
+                matches = re.findall(r"export\s+(?:default\s+)?(?:async\s+)?(function|class|const|type|interface)\s+([A-Za-z0-9_]+)", txt)
+                symbols.extend([f"export {k} {n}" for k, n in matches[:6]])
+            elif f.suffix == ".py":
+                matches = re.findall(r"^(?:async\s+)?def\s+([A-Za-z0-9_]+)|class\s+([A-Za-z0-9_]+)", txt, re.MULTILINE)
+                for fn, cls in matches[:6]:
+                    if fn and not fn.startswith("_"):
+                        symbols.append(f"def {fn}()")
+                    elif cls and not cls.startswith("_"):
+                        symbols.append(f"class {cls}")
+            elif f.suffix == ".go":
+                matches = re.findall(r"(?:type\s+([A-Z][A-Za-z0-9_]+)|func\s+([A-Z][A-Za-z0-9_]+))", txt)
+                for t, fn in matches[:6]:
+                    if t: symbols.append(f"type {t}")
+                    if fn: symbols.append(f"func {fn}()")
+        except Exception:
+            pass
+
+        if symbols:
+            api_map[rel] = symbols[:5]
+            total += len(symbols[:5])
+            if total >= max_symbols:
+                break
+
+    return api_map
+
+
+def get_latest_commit_diff(root: Path, max_chars: int = 4000) -> Optional[str]:
+    """Extract latest git commit patch diff for technical decision syncing in Hindsight."""
+    if not (root / ".git").exists():
+        return None
+    try:
+        diff = subprocess.check_output(
+            ["git", "-C", str(root), "log", "-1", "-p", "--stat"],
+            text=True, stderr=subprocess.DEVNULL
+        ).strip()
+        if not diff:
+            return None
+        if len(diff) > max_chars:
+            diff = diff[:max_chars] + "\n... [diff truncated for memory budget]"
+        return diff
+    except Exception:
+        return None
+
+
 def build_project_summary(
     root: Path,
-    max_depth: int = 3,
-    max_files: int = 60
+    mode: str = "standard",
+    max_depth: Optional[int] = None,
+    max_files: Optional[int] = None
 ) -> Dict[str, Any]:
-    """Compile complete universal project summary object and formatted context string."""
+    """Compile universal project summary with Level-of-Detail (LoD) token budgeting."""
+    is_deep = (mode == "deep")
+    eff_depth = max_depth if max_depth is not None else (4 if is_deep else 2)
+    eff_files = max_files if max_files is not None else (80 if is_deep else 30)
+
     fp = get_project_fingerprint(root)
     git_info = get_git_info(root)
     scan_info = scan_universal_project(root)
-    tree = generate_compact_tree(root, max_depth=max_depth, max_entries=max_files)
-    readme = get_readme_summary(root)
+    tree = generate_compact_tree(root, max_depth=eff_depth, max_entries=eff_files)
+    readme = get_readme_summary(root, max_chars=1000 if is_deep else 400)
 
     arch_patterns = detect_architecture_patterns(root, scan_info)
     exec_flow = detect_execution_flow(root)
     rules_data = detect_project_rules(root)
     env_keys = extract_env_keys(root)
+    api_map = extract_public_api_map(root, max_symbols=25 if is_deep else 10)
 
     domains_str = " | ".join(scan_info["domains"])
     manifests_str = ", ".join(scan_info["manifests"]) or "None"
 
+    tag = f"Project Context: {root.name} (Deep Mode)" if is_deep else f"Project Context: {root.name}"
     lines = [
-        f"[Project Context: {root.name}]",
+        f"[{tag}]",
         f"- Path: {root}",
         f"- Domain: {domains_str}",
         f"- Manifests: {manifests_str}",
@@ -544,23 +624,33 @@ def build_project_summary(
         status_line = f"- Git: branch '{git_info['branch']}' ({git_info['status_summary']})"
         lines.append(status_line)
         if git_info.get("recent_commits"):
-            recent_str = " | ".join(git_info["recent_commits"][:2])
-            lines.append(f"- Recent Commits: {recent_str}")
+            recent_slice = git_info["recent_commits"] if is_deep else git_info["recent_commits"][:2]
+            lines.append(f"- Recent Commits: {' | '.join(recent_slice)}")
 
     if scan_info["commands"]:
-        cmd_items = [f"{k}: `{v}`" for k, v in list(scan_info["commands"].items())[:6]]
+        cmd_limit = 10 if is_deep else 5
+        cmd_items = [f"{k}: `{v}`" for k, v in list(scan_info["commands"].items())[:cmd_limit]]
         lines.append(f"- Commands: {', '.join(cmd_items)}")
+
+    if api_map:
+        lines.append("- Core Public APIs / Exports:")
+        api_limit = 5 if is_deep else 2
+        for mod, syms in list(api_map.items())[:api_limit]:
+            lines.append(f"  • {mod}: {', '.join(syms[:4])}")
 
     if rules_data["rules"]:
         lines.append("- Core Rules & Invariants:")
-        for r in rules_data["rules"][:4]:
+        rule_limit = 8 if is_deep else 3
+        for r in rules_data["rules"][:rule_limit]:
             lines.append(f"  • {r}")
 
     if env_keys:
-        lines.append(f"- Environment Keys: {', '.join(env_keys[:8])}")
+        env_limit = 15 if is_deep else 6
+        lines.append(f"- Environment Keys: {', '.join(env_keys[:env_limit])}")
 
     if scan_info["languages"]:
-        lang_items = [f"{lang} ({cnt})" for lang, cnt in scan_info["languages"]]
+        lang_limit = 10 if is_deep else 5
+        lang_items = [f"{lang} ({cnt})" for lang, cnt in scan_info["languages"][:lang_limit]]
         lines.append(f"- Code ({scan_info['total_files']} files): {', '.join(lang_items)}")
 
     if scan_info["artifacts"]:
@@ -581,6 +671,7 @@ def build_project_summary(
     return {
         "project_name": root.name,
         "root_path": str(root),
+        "mode": mode,
         "fingerprint": fp,
         "git_info": git_info,
         "scan_info": scan_info,
@@ -588,6 +679,7 @@ def build_project_summary(
         "exec_flow": exec_flow,
         "rules_data": rules_data,
         "env_keys": env_keys,
+        "api_map": api_map,
         "readme": readme,
         "tree": tree,
         "formatted_context": formatted

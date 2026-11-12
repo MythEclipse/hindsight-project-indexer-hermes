@@ -1,6 +1,6 @@
 name: hindsight-project-indexer-hermes
-version: 0.4.0
-description: Universal codebase indexing: architecture patterns, data/execution flow, project rules/conventions, and Hindsight memory.
+version: 0.5.0
+description: Universal codebase indexing: architecture, execution flow, rules, public API maps, git diff sync, workspace switching, and LoD budgeting.
 author: MythEclipse
 license: MIT
 homepage: https://github.com/MythEclipse/hindsight-project-indexer-hermes
@@ -12,11 +12,11 @@ provides_commands:
   - reindex
   - projectinfo
   - project-indexer-update
-tags: [indexing, codebase, architecture, flows, rules, conventions, hindsight, context, efficiency, autoupdate]
+tags: [indexing, codebase, architecture, flows, rules, apis, git-diff, workspace-switch, lod-budget, hindsight]
 config_schema:
   enabled: {type: bool, description: "Enable project indexer context injection (default true)"}
   auto_update: {type: bool, description: "Enable automatic background updates from git (default true)"}
   auto_reindex_on_edit: {type: bool, description: "Auto-trigger re-indexing after write/patch operations (default true)"}
-  max_depth: {type: int, description: "Max directory depth for tree indexing (default 3)"}
-  max_files: {type: int, description: "Max file entries to summarize in tree (default 60)"}
+  max_depth: {type: int, description: "Max directory depth for tree indexing (default 2 standard, 4 deep)"}
+  max_files: {type: int, description: "Max file entries to summarize in tree (default 30 standard, 80 deep)"}
   bank_id: {type: str, description: "Hindsight bank ID override (defaults to active bank in config.json)"}

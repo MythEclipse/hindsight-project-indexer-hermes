@@ -19,18 +19,29 @@ def handle_project_index_status(args: Dict[str, Any]) -> str:
             "message": "Current directory is not inside a recognized project root (no git or manifest markers)."
         }, indent=2)
 
+    is_deep = bool(args.get("deep", False))
+    mode = "deep" if is_deep else "standard"
     cfg = load_hindsight_config()
-    summary = get_project_index(root, force_refresh=False, config_override=cfg)
-    return json.dumps({
+    summary = get_project_index(root, force_refresh=False, mode=mode, config_override=cfg)
+
+    resp = {
         "status": "ok",
         "project_name": summary["project_name"],
         "root_path": summary["root_path"],
+        "mode": summary.get("mode", mode),
         "fingerprint": summary["fingerprint"],
         "git": summary.get("git_info"),
         "scan_info": summary.get("scan_info"),
+        "architecture": summary.get("arch_patterns"),
+        "inferred_flow": summary.get("exec_flow"),
+        "core_rules": summary.get("rules_data", {}).get("rules", []),
+        "public_apis": summary.get("api_map", {}),
         "hindsight_bank": cfg.get("bank_id"),
         "hindsight_api": cfg.get("api_url")
-    }, indent=2)
+    }
+    if is_deep:
+        resp["formatted_context"] = summary.get("formatted_context")
+    return json.dumps(resp, indent=2)
 
 
 def handle_project_reindex(args: Dict[str, Any]) -> str:
@@ -42,13 +53,16 @@ def handle_project_reindex(args: Dict[str, Any]) -> str:
             "message": "Cannot reindex: not in a recognized project directory."
         }, indent=2)
 
+    is_deep = bool(args.get("deep", False))
+    mode = "deep" if is_deep else "standard"
     cfg = load_hindsight_config()
-    summary = get_project_index(root, force_refresh=True, config_override=cfg)
+    summary = get_project_index(root, force_refresh=True, mode=mode, config_override=cfg)
     return json.dumps({
         "status": "reindexed",
         "project_name": summary["project_name"],
+        "mode": mode,
         "fingerprint": summary["fingerprint"],
-        "message": f"Successfully reindexed {summary['project_name']} and queued Hindsight sync."
+        "message": f"Successfully reindexed {summary['project_name']} (mode: {mode}) and queued Hindsight sync."
     }, indent=2)
 
 

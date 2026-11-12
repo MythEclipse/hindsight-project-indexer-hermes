@@ -23,6 +23,8 @@ from .tools import (
 logger = logging.getLogger(__name__)
 
 _CTX: Any = None
+_LAST_ACTIVE_ROOT: Optional[Path] = None
+_LAST_INJECTED_FP: Optional[str] = None
 
 
 def _system_prompt_section(_info: Optional[Dict[str, Any]] = None) -> str:
@@ -31,7 +33,7 @@ def _system_prompt_section(_info: Optional[Dict[str, Any]] = None) -> str:
     if not root:
         return ""
     try:
-        summary = get_project_index(root, force_refresh=False)
+        summary = get_project_index(root, force_refresh=False, mode="standard")
         return summary.get("formatted_context", "")
     except Exception as e:
         logger.warning("Error generating project index prompt section: %s", e)
@@ -39,12 +41,24 @@ def _system_prompt_section(_info: Optional[Dict[str, Any]] = None) -> str:
 
 
 def _on_pre_llm_call(**context: Any) -> Optional[Dict[str, Any]]:
-    """Pre-LLM call hook to inject fresh project context if changes occurred."""
+    """Pre-LLM call hook to detect workspace switches or inject context on changes."""
+    global _LAST_ACTIVE_ROOT, _LAST_INJECTED_FP
     root = find_project_root()
     if not root:
         return None
     try:
-        summary = get_project_index(root, force_refresh=False)
+        switched = (_LAST_ACTIVE_ROOT is not None and _LAST_ACTIVE_ROOT != root)
+        _LAST_ACTIVE_ROOT = root
+
+        summary = get_project_index(root, force_refresh=switched, mode="standard")
+        fp = summary.get("fingerprint")
+
+        if switched or _LAST_INJECTED_FP != fp:
+            _LAST_INJECTED_FP = fp
+            prefix = f"[Workspace Switched: {root.name}]\n" if switched else ""
+            return {
+                "context": prefix + summary.get("formatted_context", "")
+            }
         return None
     except Exception as e:
         logger.warning("Project indexer pre_llm_call failed: %s", e)
@@ -59,25 +73,31 @@ def _on_post_tool_call(tool_name: str = "", **kwargs: Any) -> None:
 
 
 def _command_reindex(raw_args: str = "") -> str:
-    """CLI command /reindex handler."""
+    """CLI command /reindex handler (supports --deep flag)."""
     root = find_project_root()
     if not root:
         return "Not inside a recognized project root directory."
     try:
-        summary = get_project_index(root, force_refresh=True)
-        return f"Successfully reindexed '{summary['project_name']}' (fingerprint: {summary['fingerprint']})."
+        is_deep = "--deep" in (raw_args or "")
+        mode = "deep" if is_deep else "standard"
+        summary = get_project_index(root, force_refresh=True, mode=mode)
+        return f"Successfully reindexed '{summary['project_name']}' in {mode} mode (fingerprint: {summary['fingerprint']})."
     except Exception as e:
         return f"Failed to reindex: {e}"
 
 
 def _command_projectinfo(raw_args: str = "") -> str:
-    """CLI command /projectinfo handler."""
+    """CLI command /projectinfo handler (supports --deep flag)."""
     root = find_project_root()
     if not root:
         return "Not inside a recognized project directory."
     try:
         cfg = load_hindsight_config()
-        summary = get_project_index(root, force_refresh=False)
+        is_deep = "--deep" in (raw_args or "")
+        mode = "deep" if is_deep else "standard"
+        summary = get_project_index(root, force_refresh=False, mode=mode)
+        if is_deep:
+            return summary.get("formatted_context", "")
         scan = summary.get("scan_info", {})
         domains = " | ".join(scan.get("domains", [])) or "General"
         langs = ", ".join([f"{l} ({c})" for l, c in scan.get("languages", [])]) or "None"
