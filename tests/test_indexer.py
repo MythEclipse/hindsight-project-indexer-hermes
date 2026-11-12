@@ -7,7 +7,7 @@ from pathlib import Path
 from hindsight_project_indexer.indexer import (
     find_project_root,
     get_project_fingerprint,
-    analyze_tech_stack,
+    scan_universal_project,
     generate_compact_tree,
     build_project_summary
 )
@@ -26,15 +26,21 @@ class TestIndexer(unittest.TestCase):
             (tmp_path / ".git").mkdir()
             self.assertEqual(find_project_root(sub), tmp_path)
 
-    def test_analyze_tech_stack(self):
+    def test_scan_universal_project(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            (tmp_path / "package.json").write_text('{"dependencies": {"react": "^18.0.0", "typescript": "^5.0.0"}}')
+            (tmp_path / "Cargo.toml").write_text('[package]\nname = "my_rust_app"')
+            (tmp_path / "src").mkdir()
+            (tmp_path / "src" / "main.rs").write_text('fn main() {}')
+            (tmp_path / "model.gguf").write_text('dummy')
 
-            stack = analyze_tech_stack(tmp_path)
-            self.assertIn("TypeScript", stack["languages"])
-            self.assertIn("React", stack["frameworks"])
-            self.assertIn("package.json", stack["manifests"])
+            info = scan_universal_project(tmp_path)
+            lang_names = [l for l, c in info["languages"]]
+            self.assertIn("Rust", lang_names)
+            self.assertIn("Rust (Cargo)", info["manifests"])
+            self.assertIn("build", info["commands"])
+            # GGUF artifact triggers ML domain
+            self.assertTrue(any("ML" in d for d in info["domains"]))
 
     def test_compact_tree(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -57,7 +63,6 @@ class TestIndexer(unittest.TestCase):
 
             summary = build_project_summary(tmp_path)
             self.assertEqual(summary["project_name"], tmp_path.name)
-            self.assertIn("Rust", summary["stack"]["languages"])
             self.assertIn("My Test App", summary["readme"])
             self.assertIsNotNone(summary["fingerprint"])
 

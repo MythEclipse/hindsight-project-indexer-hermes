@@ -78,17 +78,20 @@ def _command_projectinfo(raw_args: str = "") -> str:
     try:
         cfg = load_hindsight_config()
         summary = get_project_index(root, force_refresh=False)
-        langs = ", ".join(summary["stack"]["languages"]) or "None"
-        fws = ", ".join(summary["stack"]["frameworks"]) or "None"
+        scan = summary.get("scan_info", {})
+        domains = " | ".join(scan.get("domains", [])) or "General"
+        langs = ", ".join([f"{l} ({c})" for l, c in scan.get("languages", [])]) or "None"
+        cmds = ", ".join([f"{k}: {v}" for k, v in scan.get("commands", {}).items()]) or "None"
         git = summary.get("git_info", {})
-        git_line = f"Git: {git.get('branch')} ({git.get('commit')})" if git.get("branch") else ""
+        git_line = f"Git: {git.get('branch')} ({git.get('status_summary', '')})" if git.get("branch") else ""
         return (
             f"Project: {summary['project_name']}\n"
             f"Path: {summary['root_path']}\n"
+            f"Domain: {domains}\n"
             f"Fingerprint: {summary['fingerprint']}\n"
             f"{git_line}\n"
-            f"Languages: {langs}\n"
-            f"Frameworks: {fws}\n"
+            f"Commands: {cmds}\n"
+            f"Code: {langs}\n"
             f"Hindsight Bank: {cfg.get('bank_id')} ({cfg.get('api_url')})"
         )
     except Exception as e:

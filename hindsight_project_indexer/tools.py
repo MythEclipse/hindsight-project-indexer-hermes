@@ -27,7 +27,7 @@ def handle_project_index_status(args: Dict[str, Any]) -> str:
         "root_path": summary["root_path"],
         "fingerprint": summary["fingerprint"],
         "git": summary.get("git_info"),
-        "stack": summary["stack"],
+        "scan_info": summary.get("scan_info"),
         "hindsight_bank": cfg.get("bank_id"),
         "hindsight_api": cfg.get("api_url")
     }, indent=2)

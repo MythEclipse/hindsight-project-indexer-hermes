@@ -1,113 +1,77 @@
-# hindsight-project-indexer-hermes
+# hindsight-project-indexer-hermes (v0.3.0)
 
-Smart project indexing, context injection, and background self-update for [Hermes Agent](https://hermes-agent.nousresearch.com/), backed by [Hindsight](https://github.com/MythEclipse) long-term memory.
+Universal, stack-agnostic project indexing, context injection, and background self-update for [Hermes Agent](https://hermes-agent.nousresearch.com/), backed by [Hindsight](https://github.com/MythEclipse) long-term memory.
 
 ---
 
 ## 💡 The Problem
 
-By default, an AI coding agent starts each session blind:
-1. It repeatedly calls `search_files`, `read_file`, and directory listing tools to understand repository layout, tech stack, and dependencies.
-2. This consumes unnecessary roundtrips, latency, and context window tokens over and over again.
+By default, an AI agent starts each session blind:
+1. It repeatedly calls `search_files`, `read_file`, and exploratory commands to understand project domain, language composition, build commands, and file structure.
+2. Most existing tools assume projects are just web applications.
+3. This consumes unnecessary latency, token budget, and model roundtrips across all domains (ML, CTF, systems, gamedev, backend, etc.).
 
-## 🚀 The Solution
+## 🚀 The Solution: Universal Indexing
 
-`hindsight-project-indexer-hermes` indexes the codebase **once**, stores the structured overview into **Hindsight** and a fast local disk cache, and updates it only when files actually change.
+`hindsight-project-indexer-hermes` provides **general, stack-agnostic codebase indexing**:
+It indexes once, syncs the survey to **Hindsight memory** (`hermes-gemini` bank) and a sub-millisecond local cache, and keeps all fleet hosts updated automatically.
 
-### Key Features
+### 🌟 Universal Domains Supported
 
-- **Automatic Project Detection**: Traverses upwards to locate the true project root (via `.git` or package manifests like `package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`, etc.).
-- **Smart Fingerprinting**: Uses Git commit HEAD + porcelain status (or mtime/size hash fallback) to instantly detect whether the repository has changed since the last index.
-- **Rich Tech Stack & Architecture Extraction**:
-  - Languages & frameworks (React, Next.js, Hono, Axum, FastAPI, etc.)
-  - Active Git branch, latest commit, and dirty state
-  - Monorepo detection (pnpm workspaces, Cargo workspaces, apps/ & packages/)
-  - Infra detection (Docker, Docker Compose, GitHub Actions, Nix)
-  - Key config files & environment templates
-- **Hindsight Long-Term Memory Integration**: Synchronizes the project survey into Hindsight memory (`hermes-gemini` bank) with tags `type:project_index` and `project:<name>`.
-- **Zero-Latency In-Memory & Disk Caching**: Repeated turns in the same project take `< 1ms` to resolve the cached index.
-- **Dynamic Context Injection**: Injects the project context directly via Hermes's `register_system_prompt_section` and `pre_llm_call`.
-- **Change Invalidation Hook**: Listens to `post_tool_call` on file-modifying tools (`write_file`, `patch`, `terminal`, `execute_code`) and flags the index as dirty so updates occur smoothly on the next turn.
-- **Automatic Self-Updating**:
-  - Built-in background update check (`auto_update.py`): polls git remote at bounded intervals (every 30 mins) and fast-forwards `main` automatically without restarting or stalling Hermes.
-  - Manual update command `/project-indexer-update` and tool `project_indexer_update`.
+- **ML / AI & GPU Systems**: PyTorch, CUDA kernels (`.cu`, `.cuh`), Jupyter notebooks (`.ipynb`), model weights (`.gguf`, `.safetensors`, `.pt`, `.onnx`), model directories (`models/`, `weights/`).
+- **Systems & Native Engineering**: C, C++, Rust, Zig, Assembly (`.asm`, `.s`), Makefiles, CMake, Meson, Cargo.
+- **Security & Reverse Engineering (CTF)**: PCAP network captures (`.pcap`, `.pcapng`), memory dumps (`.dmp`), ELF/PE binaries, exploit/challenge folders (`exploits/`, `pwn/`, `challenges/`).
+- **Game Dev & Creative Graphics**: Unity C# (`.cs`, `.unity`, `.prefab`), Shaders (`.hlsl`, `.glsl`), Blender scenes (`.blend`), Aseprite pixel art (`.ase`, `.aseprite`).
+- **Infra, DevOps & Containers**: Nix flakes (`flake.nix`), Dockerfiles, Docker Compose, systemd unit files, Shell scripts (`.sh`, `.bash`).
+- **Applications & Services**: CLI tools, background bots, APIs, desktop apps, and web frontends.
 
 ---
 
-## 📦 Architecture
+### 🔍 What Gets Indexed
 
-```
-Project Directory
-      │
-      ▼
-┌─────────────────────────────────┐
-│       indexer.py                │
-│  - find_project_root()          │
-│  - get_git_info()               │
-│  - get_project_fingerprint()    │
-│  - analyze_tech_stack()         │
-│  - generate_compact_tree()      │
-└──────────────┬──────────────────┘
-               │
-               ▼
-┌─────────────────────────────────┐
-│     hindsight_sync.py           │
-│  - In-memory cache (< 1ms)      │
-│  - Disk cache (~/.hermes/cache) │
-│  - Async Hindsight retain       │
-└──────────────┬──────────────────┘
-               │
-               ▼
-┌─────────────────────────────────┐
-│     auto_update.py              │
-│  - Background git fetch & merge │
-│  - Fast-forward auto sync       │
-└──────────────┬──────────────────┘
-               │
-               ▼
-┌─────────────────────────────────┐
-│     __init__.py (Hermes Plugin) │
-│  - register_system_prompt_sec() │
-│  - pre_llm_call / post_tool_call│
-│  - /reindex, /projectinfo,      │
-│    /project-indexer-update      │
-│  - Hermes Tools                 │
-└─────────────────────────────────┘
+1. **Domain Classification**: Automatically classifies the active workspace (e.g. `ML / AI & GPU Systems | Systems / Native Engineering`).
+2. **Build & Execution Commands**: Discovers build/run/test commands from `Cargo.toml`, `Makefile`, `CMakeLists.txt`, `pyproject.toml`, `package.json`, etc.
+3. **Language Composition**: Scans and counts lines/files across 45+ languages.
+4. **Special Artifacts**: Detects model weights, network pcaps, memory dumps, and compiled binaries.
+5. **Key Directory Mapping**: Identifies purpose of folders (`core/`, `kernel/`, `models/`, `tools/`, `exploits/`, `scripts/`, `docs/`, `apps/`, `crates/`).
+6. **Live Git Status & History**: Active branch, latest commit with relative timestamp, cleanliness.
+7. **Compact Layout Tree**: Filtered hierarchy omitting noisy build caches (`target/`, `build/`, `node_modules/`, `dist/`, `__pycache__`, etc.).
+
+---
+
+### 📋 Example Injected Context
+
+```markdown
+[Project Context: llm]
+- Path: /home/asephs/Projects/llm
+- Domain: ML / AI & GPU Systems | Systems / Native Engineering
+- Manifests: Rust (Cargo)
+- Fingerprint: a1b2c3d4e5f6
+- Git: branch 'main' (clean)
+- Recent Commits: 8c12f4a feat: add flash-decoding kernel (2 hours ago)
+- Commands: build: `cargo build`, test: `cargo test`
+- Code (106 files): Rust (65), Python (6), Markdown (6), TOML (5)
+- Special Artifacts: GGUF Model (6), Weight/Binary Blob (3)
+- Key Directories: models/ (Model files / weights), tests/ (Test suite), docs/ (Documentation)
+
+Directory Layout:
+...
 ```
 
 ---
 
-## 🛠️ CLI Commands & Tools
+## 🔄 Automatic Fleet Self-Updating
 
-### User Commands
-- `/reindex`: Force an immediate re-index of the active project and sync to Hindsight.
-- `/projectinfo`: View the detected tech stack, git branch, root path, fingerprint, and Hindsight bank configuration.
-- `/project-indexer-update`: Manually trigger git fetch and fast-forward update of the plugin.
-
-### Agent Tools
-- `project_index_status`: Tool for the model to check current project status, git branch, and fingerprint.
-- `project_reindex`: Tool for the model to trigger a refreshed codebase scan.
-- `project_indexer_update`: Tool for the model to self-update the plugin repository.
-
----
-
-## ⚙️ Configuration
-
-In your Hermes configuration (`~/.hermes/config.yaml`):
-
-```yaml
-plugins:
-  enabled:
-    - hindsight-project-indexer-hermes
-```
-
-The plugin automatically reads Hindsight API settings from `~/.hermes/hindsight/config.json` (falling back to `HINDSIGHT_API_URL` and `HINDSIGHT_BANK_ID` environment variables).
+- **In-Plugin Background Thread**: Polls git remote every 30 minutes and fast-forwards `main` automatically.
+- **CLI Commands**:
+  - `/reindex`: Force immediate codebase re-scan and Hindsight sync.
+  - `/projectinfo`: View active project domain, git state, and commands.
+  - `/project-indexer-update`: Force pull latest plugin code from GitHub.
+- **Agent Tools**: `project_index_status`, `project_reindex`, `project_indexer_update`.
 
 ---
 
 ## 🧪 Testing
-
-Run unit tests:
 
 ```bash
 python -m unittest discover -s tests
@@ -117,4 +81,4 @@ python -m unittest discover -s tests
 
 ## 📄 License
 
-MIT License. Crafted with precision for Hermes Agent and the Hindsight memory ecosystem.
+MIT License. Designed for Hermes Agent and the Hindsight memory ecosystem.
