@@ -1,6 +1,6 @@
 name: hindsight-project-indexer-hermes
 version: 0.5.0
-description: Universal codebase indexing: architecture, execution flow, rules, public API maps, git diff sync, workspace switching, and LoD budgeting.
+description: "Universal codebase indexing: architecture, execution flow, rules, public API maps, git diff sync, workspace switching, and LoD budgeting."
 author: MythEclipse
 license: MIT
 homepage: https://github.com/MythEclipse/hindsight-project-indexer-hermes
