@@ -1,4 +1,4 @@
-"""Hermes tool handlers for project index status and manual reindexing."""
+"""Hermes tool handlers for project index status, reindexing, and plugin self-update."""
 from __future__ import annotations
 
 import json
@@ -7,6 +7,7 @@ from typing import Any, Dict
 
 from .indexer import find_project_root
 from .hindsight_sync import get_project_index, load_hindsight_config
+from .auto_update import check_and_update
 
 
 def handle_project_index_status(args: Dict[str, Any]) -> str:
@@ -25,6 +26,7 @@ def handle_project_index_status(args: Dict[str, Any]) -> str:
         "project_name": summary["project_name"],
         "root_path": summary["root_path"],
         "fingerprint": summary["fingerprint"],
+        "git": summary.get("git_info"),
         "stack": summary["stack"],
         "hindsight_bank": cfg.get("bank_id"),
         "hindsight_api": cfg.get("api_url")
@@ -50,9 +52,15 @@ def handle_project_reindex(args: Dict[str, Any]) -> str:
     }, indent=2)
 
 
+def handle_project_indexer_update(args: Dict[str, Any]) -> str:
+    """Force check for plugin updates from git remote repository."""
+    result = check_and_update(force=True)
+    return json.dumps(result, indent=2)
+
+
 STATUS_TOOL_SCHEMA = {
     "name": "project_index_status",
-    "description": "Get the indexing status, fingerprint, and tech stack of the current active project.",
+    "description": "Get the indexing status, fingerprint, git info, and tech stack of the current active project.",
     "parameters": {
         "type": "object",
         "properties": {},
@@ -71,6 +79,16 @@ REINDEX_TOOL_SCHEMA = {
                 "description": "Optional reason for reindexing (e.g. after adding dependencies or restructuring files)."
             }
         },
+        "required": []
+    }
+}
+
+UPDATE_TOOL_SCHEMA = {
+    "name": "project_indexer_update",
+    "description": "Check for and apply updates to hindsight-project-indexer-hermes plugin directly from GitHub.",
+    "parameters": {
+        "type": "object",
+        "properties": {},
         "required": []
     }
 }

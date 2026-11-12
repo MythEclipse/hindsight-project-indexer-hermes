@@ -10,11 +10,14 @@ from typing import Any, Dict, Optional
 
 from .indexer import find_project_root
 from .hindsight_sync import get_project_index, load_hindsight_config, mark_dirty
+from .auto_update import check_and_update, start_background_auto_update
 from .tools import (
     STATUS_TOOL_SCHEMA,
     REINDEX_TOOL_SCHEMA,
+    UPDATE_TOOL_SCHEMA,
     handle_project_index_status,
-    handle_project_reindex
+    handle_project_reindex,
+    handle_project_indexer_update
 )
 
 logger = logging.getLogger(__name__)
@@ -42,7 +45,6 @@ def _on_pre_llm_call(**context: Any) -> Optional[Dict[str, Any]]:
         return None
     try:
         summary = get_project_index(root, force_refresh=False)
-        # In case system prompt was frozen before directory switch
         return None
     except Exception as e:
         logger.warning("Project indexer pre_llm_call failed: %s", e)
@@ -78,10 +80,13 @@ def _command_projectinfo(raw_args: str = "") -> str:
         summary = get_project_index(root, force_refresh=False)
         langs = ", ".join(summary["stack"]["languages"]) or "None"
         fws = ", ".join(summary["stack"]["frameworks"]) or "None"
+        git = summary.get("git_info", {})
+        git_line = f"Git: {git.get('branch')} ({git.get('commit')})" if git.get("branch") else ""
         return (
             f"Project: {summary['project_name']}\n"
             f"Path: {summary['root_path']}\n"
             f"Fingerprint: {summary['fingerprint']}\n"
+            f"{git_line}\n"
             f"Languages: {langs}\n"
             f"Frameworks: {fws}\n"
             f"Hindsight Bank: {cfg.get('bank_id')} ({cfg.get('api_url')})"
@@ -90,10 +95,22 @@ def _command_projectinfo(raw_args: str = "") -> str:
         return f"Failed to retrieve project info: {e}"
 
 
+def _command_plugin_update(raw_args: str = "") -> str:
+    """CLI command /project-indexer-update handler."""
+    res = check_and_update(force=True)
+    return f"Plugin update: {res.get('message', res.get('status'))}"
+
+
 def register(ctx: Any) -> None:
     """Register the plugin hooks, commands, tools, and prompt section with Hermes."""
     global _CTX
     _CTX = ctx
+
+    # Start background auto-updater
+    try:
+        start_background_auto_update()
+    except Exception as e:
+        logger.debug("Failed to spawn background auto-updater: %s", e)
 
     # System prompt section
     try:
@@ -113,22 +130,21 @@ def register(ctx: Any) -> None:
     # Commands
     ctx.register_command("reindex", _command_reindex, description="Reindex the current project into Hindsight")
     ctx.register_command("projectinfo", _command_projectinfo, description="Show project indexing info and status")
+    ctx.register_command("project-indexer-update", _command_plugin_update, description="Update hindsight-project-indexer plugin from git")
 
     # Tools
-    try:
-        ctx.register_tool(
-            name="project_index_status",
-            toolset="indexing",
-            schema=STATUS_TOOL_SCHEMA,
-            handler=handle_project_index_status,
-            description=STATUS_TOOL_SCHEMA["description"]
-        )
-        ctx.register_tool(
-            name="project_reindex",
-            toolset="indexing",
-            schema=REINDEX_TOOL_SCHEMA,
-            handler=handle_project_reindex,
-            description=REINDEX_TOOL_SCHEMA["description"]
-        )
-    except Exception as e:
-        logger.warning("Could not register indexing tools: %s", e)
+    for tool_name, schema, handler in [
+        ("project_index_status", STATUS_TOOL_SCHEMA, handle_project_index_status),
+        ("project_reindex", REINDEX_TOOL_SCHEMA, handle_project_reindex),
+        ("project_indexer_update", UPDATE_TOOL_SCHEMA, handle_project_indexer_update),
+    ]:
+        try:
+            ctx.register_tool(
+                name=tool_name,
+                toolset="indexing",
+                schema=schema,
+                handler=handler,
+                description=schema["description"]
+            )
+        except Exception as e:
+            logger.warning("Could not register tool %s: %s", tool_name, e)

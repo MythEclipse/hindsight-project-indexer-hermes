@@ -41,6 +41,33 @@ def find_project_root(start_path: Optional[Path] = None) -> Optional[Path]:
     return None
 
 
+def get_git_info(root: Path) -> Dict[str, str]:
+    """Extract active branch and recent commit from git."""
+    info = {"branch": "", "commit": "", "status_summary": ""}
+    if not (root / ".git").exists():
+        return info
+    try:
+        branch = subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+            text=True, stderr=subprocess.DEVNULL
+        ).strip()
+        commit = subprocess.check_output(
+            ["git", "-C", str(root), "log", "-1", "--format=%h %s (%cr)"],
+            text=True, stderr=subprocess.DEVNULL
+        ).strip()
+        status = subprocess.check_output(
+            ["git", "-C", str(root), "status", "--porcelain"],
+            text=True, stderr=subprocess.DEVNULL
+        ).strip()
+
+        info["branch"] = branch
+        info["commit"] = commit
+        info["status_summary"] = "clean" if not status else f"{len(status.splitlines())} modified/untracked files"
+    except Exception:
+        pass
+    return info
+
+
 def get_project_fingerprint(root: Path) -> str:
     """Calculate a fast fingerprint of the project state to detect changes."""
     # Git-based fast fingerprint
@@ -77,12 +104,15 @@ def get_project_fingerprint(root: Path) -> str:
 
 
 def analyze_tech_stack(root: Path) -> Dict[str, Any]:
-    """Extract tech stack, languages, and frameworks from project manifests."""
+    """Extract tech stack, languages, frameworks, and architecture markers."""
     stack: Dict[str, Any] = {
         "languages": [],
         "frameworks": [],
         "manifests": [],
-        "entrypoints": []
+        "entrypoints": [],
+        "infra": [],
+        "monorepo": False,
+        "configs": []
     }
 
     # Node / TypeScript / JavaScript
@@ -117,6 +147,8 @@ def analyze_tech_stack(root: Path) -> Dict[str, Any]:
         stack["languages"].append("Rust")
         try:
             content = cargo_toml.read_text(encoding="utf-8")
+            if "[workspace]" in content:
+                stack["monorepo"] = True
             for fw in ["axum", "actix-web", "tokio", "sea-orm", "diesel", "leptos", "tauri"]:
                 if fw in content:
                     stack["frameworks"].append(fw)
@@ -147,6 +179,31 @@ def analyze_tech_stack(root: Path) -> Dict[str, Any]:
         stack["manifests"].append("go.mod")
         stack["languages"].append("Go")
 
+    # Monorepo detection
+    if any((root / p).exists() for p in ["pnpm-workspace.yaml", "lerna.json"]):
+        stack["monorepo"] = True
+    elif (root / "apps").is_dir() and (root / "packages").is_dir():
+        stack["monorepo"] = True
+
+    # Infra & Containers
+    for candidate, label in [
+        ("Dockerfile", "Docker"), ("docker-compose.yml", "Docker Compose"),
+        ("compose.yaml", "Docker Compose"), ("compose.yml", "Docker Compose"),
+        (".github/workflows", "GitHub Actions"), ("Makefile", "Make"),
+        ("flake.nix", "Nix Flake"), ("default.nix", "Nix")
+    ]:
+        if (root / candidate).exists():
+            stack["infra"].append(label)
+
+    # Key configs
+    for cfg in [
+        "tsconfig.json", "drizzle.config.ts", "drizzle.config.js",
+        "alembic.ini", "vite.config.ts", "vite.config.js", "next.config.mjs",
+        "next.config.js", ".env.example", ".env.sample"
+    ]:
+        if (root / cfg).exists():
+            stack["configs"].append(cfg)
+
     # Common Entrypoints
     for candidate in [
         "src/index.ts", "src/main.ts", "src/main.rs", "src/lib.rs",
@@ -158,6 +215,7 @@ def analyze_tech_stack(root: Path) -> Dict[str, Any]:
 
     stack["languages"] = sorted(list(set(stack["languages"])))
     stack["frameworks"] = sorted(list(set(stack["frameworks"])))
+    stack["infra"] = sorted(list(set(stack["infra"])))
     return stack
 
 
@@ -205,7 +263,6 @@ def get_readme_summary(root: Path, max_chars: int = 800) -> str:
         if f.exists() and f.is_file():
             try:
                 content = f.read_text(encoding="utf-8")
-                # Strip excessive blank lines and grab head
                 lines = [line.strip() for line in content.splitlines() if line.strip()]
                 summary = " ".join(lines[:10])
                 if len(summary) > max_chars:
@@ -223,6 +280,7 @@ def build_project_summary(
 ) -> Dict[str, Any]:
     """Compile complete project summary object and formatted context string."""
     fp = get_project_fingerprint(root)
+    git_info = get_git_info(root)
     stack = analyze_tech_stack(root)
     tree = generate_compact_tree(root, max_depth=max_depth, max_entries=max_files)
     readme = get_readme_summary(root)
@@ -230,6 +288,8 @@ def build_project_summary(
     langs = ", ".join(stack["languages"]) or "Generic"
     fws = ", ".join(stack["frameworks"]) or "None detected"
     entrypoints = ", ".join(stack["entrypoints"]) or "None detected"
+    infra = ", ".join(stack["infra"]) or "None"
+    configs = ", ".join(stack["configs"]) or "None"
 
     formatted = f"""[Project Context: {root.name}]
 - Path: {root}
@@ -237,7 +297,15 @@ def build_project_summary(
 - Languages: {langs}
 - Frameworks: {fws}
 - Entrypoints: {entrypoints}
+- Infra: {infra}
+- Configs: {configs}
 """
+    if git_info.get("branch"):
+        formatted += f"- Git: branch '{git_info['branch']}' | {git_info['commit']} | {git_info['status_summary']}\n"
+
+    if stack.get("monorepo"):
+        formatted += "- Monorepo: Yes\n"
+
     if readme:
         formatted += f"- About: {readme}\n"
 
@@ -247,6 +315,7 @@ def build_project_summary(
         "project_name": root.name,
         "root_path": str(root),
         "fingerprint": fp,
+        "git_info": git_info,
         "stack": stack,
         "readme": readme,
         "tree": tree,
